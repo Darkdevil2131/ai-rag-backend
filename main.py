@@ -6,7 +6,7 @@ import os
 
 app = FastAPI()
 
-# ✅ CORS (required for frontend)
+# ✅ CORS (IMPORTANT)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,27 +15,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ ROOT
+# ✅ ROOT ROUTE
 @app.get("/")
 def home():
     return {"message": "🔥 RAG API Running"}
 
-# ✅ TEST ROUTE
-@app.get("/test")
-def test():
-    return {"status": "ok"}
+# ✅ API KEY
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# ✅ ASK ROUTE
+# ✅ ASK ROUTE (THIS IS WHAT YOU NEED)
 @app.get("/ask")
-async def ask(q: str):
-
+def ask(q: str):
     def generate():
-        GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-        if not GROQ_API_KEY:
-            yield "ERROR: GROQ_API_KEY not set"
-            return
-
         url = "https://api.groq.com/openai/v1/chat/completions"
 
         headers = {
@@ -45,18 +36,13 @@ async def ask(q: str):
 
         data = {
             "model": "llama3-70b-8192",
-            "messages": [
-                {"role": "user", "content": q}
-            ],
+            "messages": [{"role": "user", "content": q}],
             "stream": True,
         }
 
-        try:
-            with requests.post(url, headers=headers, json=data, stream=True) as r:
-                for line in r.iter_lines():
-                    if line:
-                        yield line.decode("utf-8") + "\n"
-        except Exception as e:
-            yield f"ERROR: {str(e)}"
+        with requests.post(url, headers=headers, json=data, stream=True) as r:
+            for line in r.iter_lines():
+                if line:
+                    yield line.decode("utf-8") + "\n"
 
     return StreamingResponse(generate(), media_type="text/plain")
