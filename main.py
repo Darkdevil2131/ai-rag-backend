@@ -6,9 +6,7 @@ import requests
 
 app = FastAPI()
 
-# =========================
 # CORS
-# =========================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,38 +15,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================
 # ROOT
-# =========================
 @app.get("/")
 def home():
     return {"message": "🔥 RAG API Running"}
 
-# =========================
 # DEBUG
-# =========================
 @app.get("/debug")
 def debug():
     return {"message": "DEBUG ROUTE WORKING"}
 
-# =========================
-# API KEY
-# =========================
+# LOAD API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# =========================
-# STREAMING ROUTE
-# =========================
+# STREAM ROUTE
 @app.get("/ask")
 async def ask(q: str):
 
     def generate():
-        print("🔥 /ask HIT:", q)
-
-        if not GROQ_API_KEY:
-            yield "ERROR: Missing GROQ_API_KEY\n"
-            return
-
         url = "https://api.groq.com/openai/v1/chat/completions"
 
         headers = {
@@ -57,31 +41,22 @@ async def ask(q: str):
         }
 
         data = {
-            "model": "llama3-8b-8192",   # ✅ FIXED MODEL
-            "messages": [
-                {"role": "user", "content": q}
-            ],
+            "model": "mixtral-8x7b-32768",   # ✅ WORKING MODEL
+            "messages": [{"role": "user", "content": q}],
             "stream": True,
         }
 
-        try:
-            with requests.post(url, headers=headers, json=data, stream=True) as r:
-                for line in r.iter_lines():
-                    if line:
-                        yield line.decode("utf-8") + "\n"
-        except Exception as e:
-            yield f"ERROR: {str(e)}\n"
+        with requests.post(url, headers=headers, json=data, stream=True) as r:
+            for line in r.iter_lines():
+                if line:
+                    yield line.decode("utf-8") + "\n"
 
     return StreamingResponse(generate(), media_type="text/plain")
 
 
-# =========================
-# NON-STREAM (TEST ROUTE)
-# =========================
+# JSON ROUTE (EASIER FOR FRONTEND)
 @app.get("/ask-json")
 def ask_json(q: str):
-
-    print("🔥 /ask-json HIT:", q)
 
     if not GROQ_API_KEY:
         return {"error": "Missing GROQ_API_KEY"}
@@ -94,10 +69,8 @@ def ask_json(q: str):
     }
 
     data = {
-        "model": "llama3-8b-8192",   # ✅ FIXED MODEL
-        "messages": [
-            {"role": "user", "content": q}
-        ],
+        "model": "mixtral-8x7b-32768",   # ✅ WORKING MODEL
+        "messages": [{"role": "user", "content": q}],
     }
 
     try:
