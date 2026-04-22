@@ -1,15 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from dotenv import load_dotenv
-import os
 import requests
-
-load_dotenv()
+import os
 
 app = FastAPI()
 
-# ✅ CORS (important for frontend)
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,24 +15,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ ROOT CHECK
+# ROOT
 @app.get("/")
 def home():
     return {"message": "🔥 RAG API Running"}
 
-# ✅ LOAD API KEY
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# TEST ROUTE (IMPORTANT)
+@app.get("/test")
+def test():
+    return {"status": "ok"}
 
-# ✅ ASK ENDPOINT (STREAMING)
+# ASK ROUTE
 @app.get("/ask")
 async def ask(q: str):
 
     def generate():
+        GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+        if not GROQ_API_KEY:
+            yield "ERROR: API KEY NOT FOUND"
+            return
+
         url = "https://api.groq.com/openai/v1/chat/completions"
 
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         data = {
@@ -43,13 +48,15 @@ async def ask(q: str):
             "messages": [
                 {"role": "user", "content": q}
             ],
-            "stream": True
+            "stream": True,
         }
 
-        with requests.post(url, headers=headers, json=data, stream=True) as r:
-            for line in r.iter_lines():
-                if line:
-                    decoded = line.decode("utf-8")
-                    yield decoded + "\n"
+        try:
+            with requests.post(url, headers=headers, json=data, stream=True) as r:
+                for line in r.iter_lines():
+                    if line:
+                        yield line.decode("utf-8") + "\n"
+        except Exception as e:
+            yield f"ERROR: {str(e)}"
 
     return StreamingResponse(generate(), media_type="text/plain")
