@@ -7,7 +7,7 @@ import requests
 app = FastAPI()
 
 # =========================
-# CORS (IMPORTANT)
+# CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
@@ -18,32 +18,32 @@ app.add_middleware(
 )
 
 # =========================
-# ROOT ROUTE
+# ROOT
 # =========================
 @app.get("/")
 def home():
     return {"message": "🔥 RAG API Running"}
 
 # =========================
-# DEBUG ROUTE (CRITICAL)
+# DEBUG
 # =========================
 @app.get("/debug")
 def debug():
     return {"message": "DEBUG ROUTE WORKING"}
 
 # =========================
-# LOAD API KEY
+# API KEY
 # =========================
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # =========================
-# STREAMING ASK ROUTE
+# STREAMING ROUTE
 # =========================
 @app.get("/ask")
 async def ask(q: str):
 
     def generate():
-        print("🔥 /ask HIT with:", q)
+        print("🔥 /ask HIT:", q)
 
         if not GROQ_API_KEY:
             yield "ERROR: Missing GROQ_API_KEY\n"
@@ -57,8 +57,10 @@ async def ask(q: str):
         }
 
         data = {
-            "model": "llama3-70b-8192",
-            "messages": [{"role": "user", "content": q}],
+            "model": "llama3-8b-8192",   # ✅ FIXED MODEL
+            "messages": [
+                {"role": "user", "content": q}
+            ],
             "stream": True,
         }
 
@@ -74,12 +76,12 @@ async def ask(q: str):
 
 
 # =========================
-# NON-STREAM TEST ROUTE
+# NON-STREAM (TEST ROUTE)
 # =========================
 @app.get("/ask-json")
 def ask_json(q: str):
 
-    print("🔥 /ask-json HIT with:", q)
+    print("🔥 /ask-json HIT:", q)
 
     if not GROQ_API_KEY:
         return {"error": "Missing GROQ_API_KEY"}
@@ -92,8 +94,10 @@ def ask_json(q: str):
     }
 
     data = {
-        "model": "llama3-70b-8192",
-        "messages": [{"role": "user", "content": q}],
+        "model": "llama3-8b-8192",   # ✅ FIXED MODEL
+        "messages": [
+            {"role": "user", "content": q}
+        ],
     }
 
     try:
