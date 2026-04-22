@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vivek Awasthi</title>
+
+    <style>
+        body {
+            background: #0f172a;
+            font-family: Arial;
+            color: white;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 600px;
+            margin-top: 50px;
+        }
+
+        .chat-box {
+            height: 400px;
+            background: #1e293b;
+            padding: 20px;
+            overflow-y: auto;
+            border-radius: 10px;
+        }
+
+        .input-box {
+            display: flex;
+            margin-top: 10px;
+        }
+
+        input {
+            flex: 1;
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+        }
+
+        button {
+            margin-left: 10px;
+            padding: 10px;
+            background: #22c55e;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .user {
+            color: #38bdf8;
+            margin: 5px 0;
+        }
+
+        .bot {
+            color: #22c55e;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+    <h2>🤖 Vivek Assistant</h2>
+
+    <div id="chat" class="chat-box"></div>
+
+    <div class="input-box">
+        <input id="question" placeholder="Ask something..." />
+        <button onclick="send()">Send</button>
+    </div>
+</div>
+
+<script>
+async function send() {
+    const input = document.getElementById("question");
+    const chat = document.getElementById("chat");
+
+    const question = input.value;
+    if (!question) return;
+
+    chat.innerHTML += `<div class="user">🧑 ${question}</div>`;
+    input.value = "";
+
+    try {
+        const res = await fetch(`http://127.0.0.1:8000/ask?q=${encodeURIComponent(question)}`);
+        const data = await res.json();
+
+        chat.innerHTML += `<div class="bot">🤖 ${data.answer}</div>`;
+    } catch (error) {
+        chat.innerHTML += `<div class="bot">❌ Error connecting to backend</div>`;
+    }
+
+    chat.scrollTop = chat.scrollHeight;
+}
+</script>
+
+</body>
+</html>
