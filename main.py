@@ -25,7 +25,7 @@ def home():
 def debug():
     return {"message": "DEBUG ROUTE WORKING"}
 
-# LOAD API KEY
+# API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # STREAM ROUTE
@@ -41,7 +41,7 @@ async def ask(q: str):
         }
 
         data = {
-            "model": "mixtral-8x7b-32768",   # ✅ WORKING MODEL
+            "model": "llama-3.1-8b-instant",  # ✅ WORKING MODEL
             "messages": [{"role": "user", "content": q}],
             "stream": True,
         }
@@ -54,7 +54,7 @@ async def ask(q: str):
     return StreamingResponse(generate(), media_type="text/plain")
 
 
-# JSON ROUTE (EASIER FOR FRONTEND)
+# JSON ROUTE
 @app.get("/ask-json")
 def ask_json(q: str):
 
@@ -69,7 +69,7 @@ def ask_json(q: str):
     }
 
     data = {
-        "model": "mixtral-8x7b-32768",   # ✅ WORKING MODEL
+        "model": "llama-3.1-8b-instant",  # ✅ WORKING MODEL
         "messages": [{"role": "user", "content": q}],
     }
 
