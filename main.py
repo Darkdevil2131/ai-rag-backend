@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import requests
@@ -25,11 +25,11 @@ def home():
     return {"message": "🔥 RAG API Running"}
 
 # =========================
-# HEALTH CHECK (DEBUG)
+# DEBUG ROUTE (CRITICAL)
 # =========================
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+@app.get("/debug")
+def debug():
+    return {"message": "DEBUG ROUTE WORKING"}
 
 # =========================
 # LOAD API KEY
@@ -37,18 +37,18 @@ def health():
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # =========================
-# ASK ROUTE (STREAMING)
+# STREAMING ASK ROUTE
 # =========================
 @app.get("/ask")
 async def ask(q: str):
 
-    if not GROQ_API_KEY:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Missing GROQ_API_KEY"}
-        )
-
     def generate():
+        print("🔥 /ask HIT with:", q)
+
+        if not GROQ_API_KEY:
+            yield "ERROR: Missing GROQ_API_KEY\n"
+            return
+
         url = "https://api.groq.com/openai/v1/chat/completions"
 
         headers = {
@@ -58,10 +58,7 @@ async def ask(q: str):
 
         data = {
             "model": "llama3-70b-8192",
-            "messages": [
-                {"role": "system", "content": "You are a helpful AI assistant."},
-                {"role": "user", "content": q}
-            ],
+            "messages": [{"role": "user", "content": q}],
             "stream": True,
         }
 
@@ -71,15 +68,18 @@ async def ask(q: str):
                     if line:
                         yield line.decode("utf-8") + "\n"
         except Exception as e:
-            yield f"ERROR: {str(e)}"
+            yield f"ERROR: {str(e)}\n"
 
     return StreamingResponse(generate(), media_type="text/plain")
 
+
 # =========================
-# NON-STREAM DEBUG ROUTE
+# NON-STREAM TEST ROUTE
 # =========================
 @app.get("/ask-json")
 def ask_json(q: str):
+
+    print("🔥 /ask-json HIT with:", q)
 
     if not GROQ_API_KEY:
         return {"error": "Missing GROQ_API_KEY"}
