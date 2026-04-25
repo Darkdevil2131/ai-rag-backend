@@ -3,17 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import requests
 from dotenv import load_dotenv
-
-import faiss
 import pickle
-import numpy as np
 
-# 🔥 LOAD ENV
+# 🔥 Load environment variables
 load_dotenv()
 
-app = FastAPI(title="AI RAG Backend")
+app = FastAPI()
 
-# 🔹 CORS
+# 🔹 Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,66 +19,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔹 API KEY
+# 🔹 API Key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 LOAD INDEX + DATA (SAFE)
-print("🔄 Loading FAISS index...")
+# 🔹 Load chunks safely
+print("🔄 Loading chunks...")
 
-index = None
 chunks = []
 
 try:
-    if os.path.exists("faiss.index") and os.path.exists("chunks.pkl"):
-        index = faiss.read_index("faiss.index")
-
+    if os.path.exists("chunks.pkl"):
         with open("chunks.pkl", "rb") as f:
             chunks = pickle.load(f)
-
         print(f"✅ Loaded {len(chunks)} chunks")
     else:
-        print("❌ Index files not found")
-
+        print("❌ chunks.pkl not found")
 except Exception as e:
-    print("❌ Error loading index:", str(e))
+    print("❌ Error loading chunks:", str(e))
 
 
-# 🔹 ROOT
+# 🔹 ROOT ROUTE
 @app.get("/")
 def home():
-    return {"status": "running", "message": "🔥 RAG API Live"}
+    return {"status": "running", "message": "Backend Live"}
 
 
-# 🔹 DEBUG
+# 🔹 DEBUG ROUTE
 @app.get("/debug")
 def debug():
     return {
         "api_key_loaded": bool(GROQ_API_KEY),
-        "chunks_loaded": len(chunks),
-        "index_loaded": index is not None
+        "chunks_loaded": len(chunks)
     }
 
 
-# 🔹 RETRIEVAL (LIGHTWEIGHT FALLBACK)
-def retrieve_context(query, k=5):
-    if index is None or not chunks:
+# 🔹 SIMPLE RETRIEVAL (NO FAISS, NO ML MODELS)
+def retrieve_context(query: str, k: int = 5):
+    if not chunks:
         return ""
 
-    # ⚠️ Using random vector to avoid heavy embedding model
-    query_vector = np.random.rand(1, index.d).astype("float32")
-
-    distances, indices = index.search(query_vector, k)
-
+    query = query.lower()
     results = []
-    for i in indices[0]:
-        if i < len(chunks):
-            results.append(chunks[i])
 
-    return "\n".join(results)
+    for chunk in chunks:
+        if query in chunk.lower():
+            results.append(chunk)
+
+    # fallback if nothing found
+    if not results:
+        results = chunks[:k]
+
+    return "\n".join(results[:k])
 
 
 # 🔹 GROQ CALL
-def call_groq(prompt):
+def call_groq(prompt: str):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     headers = {
@@ -92,7 +84,6 @@ def call_groq(prompt):
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3
     }
 
     try:
@@ -102,14 +93,13 @@ def call_groq(prompt):
             return f"API Error: {response.text}"
 
         result = response.json()
-
         return result["choices"][0]["message"]["content"]
 
     except Exception as e:
-        return f"Error calling model: {str(e)}"
+        return f"Error: {str(e)}"
 
 
-# 🔥 ASK ROUTE
+# 🔥 MAIN ASK ROUTE
 @app.get("/ask")
 def ask(q: str):
 
@@ -122,10 +112,7 @@ def ask(q: str):
     context = retrieve_context(q)
 
     prompt = f"""
-You are an AI assistant.
-
-Answer ONLY using the context below.
-If the answer is not found, say "Not found in document".
+Answer using ONLY the context below.
 
 Context:
 {context}
@@ -138,6 +125,5 @@ Question:
 
     return {
         "query": q,
-        "answer": answer,
-        "context_length": len(context)
+        "answer": answer
     }
