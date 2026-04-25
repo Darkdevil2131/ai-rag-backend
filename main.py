@@ -5,12 +5,12 @@ import requests
 from dotenv import load_dotenv
 import pickle
 
-# 🔥 Load environment variables
+# 🔥 Load env
 load_dotenv()
 
 app = FastAPI(title="Stable RAG Backend")
 
-# 🔹 Enable CORS
+# 🔹 CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,10 +19,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔹 API Key
+# 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 Load chunks safely
+# 🔹 LOAD CHUNKS
 print("🔄 Loading chunks...")
 
 chunks = []
@@ -53,26 +53,37 @@ def debug():
     }
 
 
-# 🔹 SIMPLE RETRIEVAL (SAFE)
+# 🔥 IMPROVED RETRIEVAL (SCORING BASED)
 def retrieve_context(query, k=5):
     if not chunks:
         return ""
 
-    query = query.lower()
-    results = []
+    query_words = query.lower().split()
+    scored_chunks = []
 
     for chunk in chunks:
-        if query in chunk.lower():
-            results.append(chunk)
+        chunk_lower = chunk.lower()
 
-    # fallback
-    if not results:
-        results = chunks[:k]
+        # score = number of matching words
+        score = sum(1 for word in query_words if word in chunk_lower)
 
-    return "\n".join(results[:k])
+        if score > 0:
+            scored_chunks.append((score, chunk))
+
+    # sort best first
+    scored_chunks.sort(reverse=True, key=lambda x: x[0])
+
+    # take top k
+    top_chunks = [chunk for _, chunk in scored_chunks[:k]]
+
+    # fallback if nothing matches
+    if not top_chunks:
+        top_chunks = chunks[:k]
+
+    return "\n".join(top_chunks)
 
 
-# 🔹 GROQ API CALL
+# 🔹 GROQ CALL
 def call_groq(prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -84,6 +95,7 @@ def call_groq(prompt):
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3
     }
 
     try:
@@ -112,7 +124,13 @@ def ask(q: str):
     context = retrieve_context(q)
 
     prompt = f"""
-Answer ONLY using the context below.
+You are an AI assistant.
+
+Answer the question using ONLY the context below.
+
+If the answer is not found, say: "Not found in document."
+
+Be clear and direct.
 
 Context:
 {context}
@@ -125,5 +143,6 @@ Question:
 
     return {
         "query": q,
-        "answer": answer
+        "answer": answer,
+        "context_preview": context[:300]
     }
