@@ -4,13 +4,14 @@ import os
 import requests
 from dotenv import load_dotenv
 import pickle
+import numpy as np
 
-# 🔥 Load environment variables
+# 🔥 LOAD ENV
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(title="Production RAG API")
 
-# 🔹 Enable CORS
+# 🔹 CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,61 +20,88 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔹 API Key
+# 🔹 ENV
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 Load chunks safely
-print("🔄 Loading chunks...")
+# 🔹 LOAD DATA
+print("🔄 Loading embeddings...")
 
 chunks = []
+embeddings = []
 
 try:
-    if os.path.exists("chunks.pkl"):
-        with open("chunks.pkl", "rb") as f:
-            chunks = pickle.load(f)
-        print(f"✅ Loaded {len(chunks)} chunks")
-    else:
-        print("❌ chunks.pkl not found")
+    with open("chunks.pkl", "rb") as f:
+        chunks = pickle.load(f)
+
+    with open("embeddings.pkl", "rb") as f:
+        embeddings = pickle.load(f)
+
+    embeddings = np.array(embeddings)
+
+    print(f"✅ Loaded {len(chunks)} chunks")
+
 except Exception as e:
-    print("❌ Error loading chunks:", str(e))
+    print("❌ Load error:", str(e))
 
 
-# 🔹 ROOT ROUTE
+# 🔹 ROOT
 @app.get("/")
 def home():
-    return {"status": "running", "message": "Backend Live"}
+    return {"status": "running", "message": "Production RAG Live"}
 
 
-# 🔹 DEBUG ROUTE
+# 🔹 DEBUG
 @app.get("/debug")
 def debug():
     return {
         "api_key_loaded": bool(GROQ_API_KEY),
-        "chunks_loaded": len(chunks)
+        "chunks_loaded": len(chunks),
+        "embeddings_loaded": len(embeddings)
     }
 
 
-# 🔹 SIMPLE RETRIEVAL (NO FAISS, NO ML MODELS)
-def retrieve_context(query: str, k: int = 5):
-    if not chunks:
-        return ""
+# 🔹 EMBEDDING API
+def get_embedding(text):
+    url = "https://api.groq.com/openai/v1/embeddings"
 
-    query = query.lower()
-    results = []
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-    for chunk in chunks:
-        if query in chunk.lower():
-            results.append(chunk)
+    data = {
+        "model": "text-embedding-3-small",
+        "input": text
+    }
 
-    # fallback if nothing found
-    if not results:
-        results = chunks[:k]
+    response = requests.post(url, headers=headers, json=data, timeout=20)
+    result = response.json()
 
-    return "\n".join(results[:k])
+    return np.array(result["data"][0]["embedding"])
+
+
+# 🔹 RETRIEVAL (COSINE SIMILARITY)
+def retrieve_context(query, k=5):
+    if len(embeddings) == 0:
+        return "", 0.0
+
+    query_vec = get_embedding(query)
+
+    scores = np.dot(embeddings, query_vec) / (
+        np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_vec)
+    )
+
+    top_k = np.argsort(scores)[-k:][::-1]
+
+    selected_chunks = [chunks[i] for i in top_k]
+
+    confidence = float(scores[top_k[0]])
+
+    return "\n".join(selected_chunks), confidence
 
 
 # 🔹 GROQ CALL
-def call_groq(prompt: str):
+def call_groq(prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     headers = {
@@ -84,35 +112,28 @@ def call_groq(prompt: str):
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=20)
+    response = requests.post(url, headers=headers, json=data, timeout=20)
+    result = response.json()
 
-        if response.status_code != 200:
-            return f"API Error: {response.text}"
-
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
-
-    except Exception as e:
-        return f"Error: {str(e)}"
+    return result["choices"][0]["message"]["content"]
 
 
-# 🔥 MAIN ASK ROUTE
+# 🔥 ASK ROUTE
 @app.get("/ask")
 def ask(q: str):
 
     if not q.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
+        raise HTTPException(status_code=400, detail="Empty query")
 
-    if not GROQ_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing GROQ_API_KEY")
-
-    context = retrieve_context(q)
+    context, confidence = retrieve_context(q)
 
     prompt = f"""
-Answer using ONLY the context below.
+You are an AI assistant.
+
+Answer ONLY using the context below.
 
 Context:
 {context}
@@ -125,5 +146,6 @@ Question:
 
     return {
         "query": q,
-        "answer": answer
+        "answer": answer,
+        "confidence": confidence
     }

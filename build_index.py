@@ -1,103 +1,16 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import os
+import pickle
 import requests
 from dotenv import load_dotenv
 
-# 🔹 RAG LOAD
-import faiss
-import pickle
-from sentence_transformers import SentenceTransformer
-import numpy as np
-
-# 🔥 LOAD ENV
 load_dotenv()
 
-app = FastAPI()
-
-# 🔹 CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-print("API KEY LOADED:", GROQ_API_KEY[:10] if GROQ_API_KEY else "NOT FOUND")
 
-# 🔹 LOAD EMBEDDING MODEL
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+DATA_FOLDER = "data"
 
-# 🔹 LOAD INDEX + DATA
-print("🔄 Loading FAISS index...")
-
-index = faiss.read_index("faiss.index")
-
-with open("chunks.pkl", "rb") as f:
-    chunks = pickle.load(f)
-
-with open("sources.pkl", "rb") as f:
-    sources = pickle.load(f)
-
-print(f"✅ Loaded {len(chunks)} chunks")
-
-# 🔹 ROOT
-@app.get("/")
-def home():
-    return {"message": "🔥 Multi-PDF RAG API Running (Improved)"}
-
-# 🔹 DEBUG
-@app.get("/debug")
-def debug():
-    return {
-        "api_key_loaded": True if GROQ_API_KEY else False,
-        "chunks_loaded": len(chunks),
-        "sources_loaded": len(sources)
-    }
-
-# 🔹 RETRIEVAL (IMPROVED)
-def retrieve_context(query, k=8):  # 🔥 increased k
-    query_embedding = embed_model.encode([query])
-    distances, indices = index.search(np.array(query_embedding), k)
-
-    results = []
-    used_sources = []
-
-    for i in indices[0]:
-        results.append(chunks[i])
-        used_sources.append(sources[i])
-
-    return "\n".join(results), list(set(used_sources))
-
-# 🔥 FINAL ASK ENDPOINT
-@app.get("/ask")
-def ask(q: str):
-
-    if not GROQ_API_KEY:
-        return {"error": "Missing GROQ_API_KEY"}
-
-    context, used_sources = retrieve_context(q)
-
-    # 🔥 IMPROVED PROMPT
-    prompt = f"""
-You are an AI assistant.
-
-Answer the question using ONLY the context below.
-
-If the answer is partially available, answer as much as possible.
-Only say "Not found in document" if absolutely no relevant info exists.
-
-Context:
-{context}
-
-Question:
-{q}
-"""
-
-    url = "https://api.groq.com/openai/v1/chat/completions"
+def get_embedding(text):
+    url = "https://api.groq.com/openai/v1/embeddings"
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -105,22 +18,49 @@ Question:
     }
 
     data = {
-        "model": "llama-3.1-8b-instant",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
+        "model": "text-embedding-3-small",
+        "input": text
     }
 
-    try:
-        r = requests.post(url, headers=headers, json=data)
-        result = r.json()
+    response = requests.post(url, headers=headers, json=data)
+    result = response.json()
 
-        answer = result["choices"][0]["message"]["content"]
+    return result["data"][0]["embedding"]
 
-        return {
-            "answer": answer,
-            "sources": used_sources
-        }
 
-    except Exception as e:
-        return {"error": str(e)}
+def chunk_text(text, chunk_size=500):
+    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+
+
+def process_txt(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+print("🔄 Building embeddings...")
+
+all_chunks = []
+all_embeddings = []
+
+for file in os.listdir(DATA_FOLDER):
+    if file.endswith(".txt"):
+        path = os.path.join(DATA_FOLDER, file)
+
+        print(f"📄 Processing {file}")
+
+        text = process_txt(path)
+        chunks = chunk_text(text)
+
+        for chunk in chunks:
+            emb = get_embedding(chunk)
+            all_chunks.append(chunk)
+            all_embeddings.append(emb)
+
+# SAVE
+with open("chunks.pkl", "wb") as f:
+    pickle.dump(all_chunks, f)
+
+with open("embeddings.pkl", "wb") as f:
+    pickle.dump(all_embeddings, f)
+
+print("✅ DONE — embeddings ready")
