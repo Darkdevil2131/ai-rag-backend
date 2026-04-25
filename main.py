@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import pickle
 import numpy as np
 
-# 🔥 LOAD ENV
+# 🔥 Load environment variables
 load_dotenv()
 
 app = FastAPI(title="Production RAG API")
@@ -20,47 +20,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔹 ENV
+# 🔹 API Key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 LOAD DATA
-print("🔄 Loading embeddings...")
+# 🔹 Load chunks at startup (lightweight)
+print("🔄 Loading chunks...")
 
 chunks = []
-embeddings = []
 
 try:
-    with open("chunks.pkl", "rb") as f:
-        chunks = pickle.load(f)
-
-    with open("embeddings.pkl", "rb") as f:
-        embeddings = pickle.load(f)
-
-    embeddings = np.array(embeddings)
-
-    print(f"✅ Loaded {len(chunks)} chunks")
-
+    if os.path.exists("chunks.pkl"):
+        with open("chunks.pkl", "rb") as f:
+            chunks = pickle.load(f)
+        print(f"✅ Loaded {len(chunks)} chunks")
+    else:
+        print("❌ chunks.pkl not found")
 except Exception as e:
-    print("❌ Load error:", str(e))
+    print("❌ Error loading chunks:", str(e))
 
 
-# 🔹 ROOT
-@app.get("/")
-def home():
-    return {"status": "running", "message": "Production RAG Live"}
+# 🔹 Lazy load embeddings (heavy → load only when needed)
+def load_embeddings():
+    try:
+        if os.path.exists("embeddings.pkl"):
+            with open("embeddings.pkl", "rb") as f:
+                return np.array(pickle.load(f))
+    except Exception as e:
+        print("❌ Error loading embeddings:", str(e))
+    return None
 
 
-# 🔹 DEBUG
-@app.get("/debug")
-def debug():
-    return {
-        "api_key_loaded": bool(GROQ_API_KEY),
-        "chunks_loaded": len(chunks),
-        "embeddings_loaded": len(embeddings)
-    }
-
-
-# 🔹 EMBEDDING API
+# 🔹 Get embedding from API (NO local model → safe for Render)
 def get_embedding(text):
     url = "https://api.groq.com/openai/v1/embeddings"
 
@@ -74,18 +64,26 @@ def get_embedding(text):
         "input": text
     }
 
-    response = requests.post(url, headers=headers, json=data, timeout=20)
-    result = response.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=20)
+        result = r.json()
+        return np.array(result["data"][0]["embedding"])
+    except Exception as e:
+        print("❌ Embedding error:", str(e))
+        return None
 
-    return np.array(result["data"][0]["embedding"])
 
-
-# 🔹 RETRIEVAL (COSINE SIMILARITY)
+# 🔹 Semantic Retrieval (cosine similarity)
 def retrieve_context(query, k=5):
-    if len(embeddings) == 0:
+    embeddings = load_embeddings()
+
+    if embeddings is None or len(chunks) == 0:
         return "", 0.0
 
     query_vec = get_embedding(query)
+
+    if query_vec is None:
+        return "", 0.0
 
     scores = np.dot(embeddings, query_vec) / (
         np.linalg.norm(embeddings, axis=1) * np.linalg.norm(query_vec)
@@ -100,7 +98,7 @@ def retrieve_context(query, k=5):
     return "\n".join(selected_chunks), confidence
 
 
-# 🔹 GROQ CALL
+# 🔹 Call Groq LLM
 def call_groq(prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -115,18 +113,43 @@ def call_groq(prompt):
         "temperature": 0.3
     }
 
-    response = requests.post(url, headers=headers, json=data, timeout=20)
-    result = response.json()
+    try:
+        r = requests.post(url, headers=headers, json=data, timeout=20)
 
-    return result["choices"][0]["message"]["content"]
+        if r.status_code != 200:
+            return f"API Error: {r.text}"
+
+        result = r.json()
+        return result["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 
-# 🔥 ASK ROUTE
+# 🔹 ROOT
+@app.get("/")
+def home():
+    return {"status": "running", "message": "Production RAG Live"}
+
+
+# 🔹 DEBUG
+@app.get("/debug")
+def debug():
+    return {
+        "api_key_loaded": bool(GROQ_API_KEY),
+        "chunks_loaded": len(chunks)
+    }
+
+
+# 🔥 MAIN ENDPOINT
 @app.get("/ask")
 def ask(q: str):
 
     if not q.strip():
-        raise HTTPException(status_code=400, detail="Empty query")
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    if not GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="Missing GROQ_API_KEY")
 
     context, confidence = retrieve_context(q)
 
