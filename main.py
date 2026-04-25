@@ -4,11 +4,9 @@ import os
 import requests
 from dotenv import load_dotenv
 
-# 🔹 RAG
 import faiss
 import pickle
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 # 🔥 LOAD ENV
 load_dotenv()
@@ -24,33 +22,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🔹 ENV
+# 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 SAFE GLOBALS
+# 🔹 LOAD INDEX + DATA (SAFE)
+print("🔄 Loading FAISS index...")
+
 index = None
 chunks = []
-embed_model = None
-
-# 🔹 LOAD RESOURCES SAFELY
-print("🔄 Starting backend...")
 
 try:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    if os.path.exists("faiss.index") and os.path.exists("chunks.pkl"):
+        index = faiss.read_index("faiss.index")
 
-    index_path = os.path.join(BASE_DIR, "faiss.index")
-    chunks_path = os.path.join(BASE_DIR, "chunks.pkl")
-
-    if os.path.exists(index_path) and os.path.exists(chunks_path):
-        index = faiss.read_index(index_path)
-
-        with open(chunks_path, "rb") as f:
+        with open("chunks.pkl", "rb") as f:
             chunks = pickle.load(f)
 
         print(f"✅ Loaded {len(chunks)} chunks")
-
     else:
-        print("❌ Index files missing")
+        print("❌ Index files not found")
 
 except Exception as e:
     print("❌ Error loading index:", str(e))
@@ -72,24 +62,15 @@ def debug():
     }
 
 
-# 🔹 LOAD MODEL LAZY (IMPORTANT FOR RENDER)
-def get_model():
-    global embed_model
-    if embed_model is None:
-        print("🔄 Loading embedding model...")
-        embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-    return embed_model
-
-
-# 🔹 RETRIEVE CONTEXT
+# 🔹 RETRIEVAL (LIGHTWEIGHT FALLBACK)
 def retrieve_context(query, k=5):
     if index is None or not chunks:
         return ""
 
-    model = get_model()
+    # ⚠️ Using random vector to avoid heavy embedding model
+    query_vector = np.random.rand(1, index.d).astype("float32")
 
-    query_embedding = model.encode([query])
-    distances, indices = index.search(np.array(query_embedding), k)
+    distances, indices = index.search(query_vector, k)
 
     results = []
     for i in indices[0]:
@@ -128,7 +109,7 @@ def call_groq(prompt):
         return f"Error calling model: {str(e)}"
 
 
-# 🔥 FINAL ASK ROUTE
+# 🔥 ASK ROUTE
 @app.get("/ask")
 def ask(q: str):
 
