@@ -8,7 +8,7 @@ import pickle
 # 🔥 Load ENV
 load_dotenv()
 
-app = FastAPI(title="RAG Backend Final")
+app = FastAPI(title="Production RAG Backend")
 
 # 🔹 CORS
 app.add_middleware(
@@ -22,13 +22,13 @@ app.add_middleware(
 # 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 PATH SETUP (VERY IMPORTANT)
+# 🔹 PATH SETUP (Render-safe)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHUNKS_PATH = os.path.join(BASE_DIR, "data", "chunks.pkl")
 
-print("📂 Loading from:", CHUNKS_PATH)
+print("📂 Loading chunks from:", CHUNKS_PATH)
 
-# 🔹 LOAD DATA
+# 🔹 LOAD CHUNKS
 chunks = []
 
 def load_chunks():
@@ -44,7 +44,7 @@ def load_chunks():
         print(f"✅ Loaded {len(chunks)} chunks")
 
     except Exception as e:
-        print("❌ Load error:", str(e))
+        print("❌ Error loading chunks:", str(e))
 
 load_chunks()
 
@@ -62,8 +62,8 @@ def debug():
         "chunks_path": CHUNKS_PATH
     }
 
-# 🔥 SMART RETRIEVAL (BALANCED)
-def retrieve_context(query, k=2):
+# 🔥 FINAL RETRIEVAL SYSTEM (BALANCED + DEDUP)
+def retrieve_context(query, k=3):
     if not chunks:
         return ""
 
@@ -92,19 +92,19 @@ def retrieve_context(query, k=2):
 
             score = 0
 
-            # topic boost
+            # 🔥 Topic filtering
             if topic_words:
                 if any(word in text for word in topic_words):
                     score += 3
                 else:
                     continue
 
-            # keyword match
+            # 🔥 Keyword scoring
             for word in query.split():
                 if word in text:
                     score += 2
 
-            # exact match boost
+            # 🔥 Exact phrase boost
             if query in text:
                 score += 5
 
@@ -114,17 +114,30 @@ def retrieve_context(query, k=2):
         except:
             continue
 
+    # 🔥 Sort best matches
     scored.sort(reverse=True, key=lambda x: x[0])
 
-    selected = [chunk for _, chunk in scored[:k]]
+    # 🔥 Deduplicate + select top k
+    selected = []
+    seen = set()
 
-    return "\n".join(selected)
+    for score, chunk in scored:
+        snippet = chunk[:100]
+
+        if snippet not in seen:
+            selected.append(chunk)
+            seen.add(snippet)
+
+        if len(selected) >= k:
+            break
+
+    return "\n\n".join(selected)
 
 
-# 🔹 GROQ CALL
+# 🔹 GROQ API CALL
 def call_groq(prompt):
     if not GROQ_API_KEY:
-        return "Missing API key"
+        return "Error: Missing GROQ API key"
 
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -145,19 +158,19 @@ def call_groq(prompt):
         if r.status_code != 200:
             return f"API Error: {r.text}"
 
-        res = r.json()
-        return res["choices"][0]["message"]["content"]
+        result = r.json()
+        return result["choices"][0]["message"]["content"]
 
     except Exception as e:
         return f"Error: {str(e)}"
 
 
-# 🔥 MAIN API
+# 🔥 MAIN ENDPOINT
 @app.get("/ask")
 def ask(q: str):
 
     if not q.strip():
-        raise HTTPException(status_code=400, detail="Empty query")
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     context = retrieve_context(q)
 
@@ -165,10 +178,12 @@ def ask(q: str):
 You are an AI assistant.
 
 RULES:
-- Answer ONLY using context
-- Do NOT guess
+- Answer ONLY using the provided context
+- Combine relevant points into a clear answer
+- Do NOT guess or invent information
+- Do NOT repeat content
 - If partial info exists, answer that
-- If nothing found, say: "Not found in document"
+- If nothing relevant, say: "Not found in document"
 
 Context:
 {context}
