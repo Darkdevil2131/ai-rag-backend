@@ -5,7 +5,7 @@ import requests
 from dotenv import load_dotenv
 import pickle
 
-# 🔥 Load env
+# 🔥 Load environment variables
 load_dotenv()
 
 app = FastAPI(title="Production RAG Backend")
@@ -22,20 +22,20 @@ app.add_middleware(
 # 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 PATH
+# 🔹 PATH SETUP (FINAL CORRECT)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHUNKS_PATH = os.path.join(BASE_DIR, "data", "chunks.pkl")
 
-print("📂 Loading from:", CHUNKS_PATH)
+print("📂 Loading chunks from:", CHUNKS_PATH)
 
-# 🔹 LOAD CHUNKS
+# 🔹 LOAD CHUNKS SAFELY
 chunks = []
 
 def load_chunks():
     global chunks
     try:
         if not os.path.exists(CHUNKS_PATH):
-            print("❌ chunks not found")
+            print("❌ chunks.pkl not found")
             return
 
         with open(CHUNKS_PATH, "rb") as f:
@@ -44,7 +44,7 @@ def load_chunks():
         print(f"✅ Loaded {len(chunks)} chunks")
 
     except Exception as e:
-        print("❌ Load error:", str(e))
+        print("❌ Error loading chunks:", str(e))
 
 load_chunks()
 
@@ -58,11 +58,11 @@ def home():
 def debug():
     return {
         "chunks_loaded": len(chunks),
-        "path": CHUNKS_PATH,
+        "chunks_path": CHUNKS_PATH,
         "api_key": bool(GROQ_API_KEY)
     }
 
-# 🔥 IMPROVED RETRIEVAL (LESS NOISE)
+# 🔥 FINAL RETRIEVAL (CLEAN + FILTERED)
 def retrieve_context(query, k=3):
     if not chunks:
         return ""
@@ -70,7 +70,7 @@ def retrieve_context(query, k=3):
     query = query.lower()
 
     synonyms = {
-        "leave": ["leave", "time off", "vacation", "sick leave", "fmla"],
+        "leave": ["leave", "time off", "vacation", "sick leave", "fmla", "absence"],
         "salary": ["salary", "pay", "wage", "compensation"],
         "benefits": ["benefits", "insurance", "health", "coverage"]
     }
@@ -86,11 +86,26 @@ def retrieve_context(query, k=3):
     for chunk in chunks:
         try:
             text = chunk.lower()
-            score = sum(1 for word in expanded if word in text)
 
-            # 🔥 stricter filtering
-            if score >= 2:
+            # ignore junk chunks
+            if len(text.strip()) < 50:
+                continue
+
+            if "electronic communication" in text or "social media" in text:
+                continue
+
+            score = 0
+
+            for word in expanded:
+                if word in text:
+                    score += 2
+
+            if query in text:
+                score += 5
+
+            if score >= 3:
                 scored.append((score, chunk))
+
         except:
             continue
 
@@ -135,18 +150,18 @@ def call_groq(prompt):
 def ask(q: str):
 
     if not q.strip():
-        raise HTTPException(status_code=400, detail="Empty query")
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     context = retrieve_context(q)
 
     prompt = f"""
 You are an AI assistant.
 
-Answer clearly and concisely using ONLY the context.
+Answer ONLY using relevant parts of the context.
 
-- Do NOT add extra explanation
-- Do NOT repeat points
-- Keep answer short and precise
+- Be precise
+- Be short
+- Do not include unrelated info
 - If not found, say: "Not found in document"
 
 Context:
@@ -161,5 +176,5 @@ Question:
     return {
         "query": q,
         "answer": answer,
-        "context_used": context[:200]
+        "context_preview": context[:200]
     }
