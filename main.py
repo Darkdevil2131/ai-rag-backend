@@ -8,7 +8,7 @@ import pickle
 # 🔥 Load environment variables
 load_dotenv()
 
-app = FastAPI(title="Production RAG Backend")
+app = FastAPI(title="Reliable RAG Backend")
 
 # 🔹 CORS
 app.add_middleware(
@@ -22,13 +22,13 @@ app.add_middleware(
 # 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 PATH SETUP (FINAL CORRECT)
+# 🔹 PATH SETUP
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHUNKS_PATH = os.path.join(BASE_DIR, "data", "chunks.pkl")
 
 print("📂 Loading chunks from:", CHUNKS_PATH)
 
-# 🔹 LOAD CHUNKS SAFELY
+# 🔹 LOAD CHUNKS
 chunks = []
 
 def load_chunks():
@@ -62,7 +62,7 @@ def debug():
         "api_key": bool(GROQ_API_KEY)
     }
 
-# 🔥 FINAL RETRIEVAL (CLEAN + FILTERED)
+# 🔥 CLEAN RETRIEVAL (FILTERED)
 def retrieve_context(query, k=3):
     if not chunks:
         return ""
@@ -87,7 +87,7 @@ def retrieve_context(query, k=3):
         try:
             text = chunk.lower()
 
-            # ignore junk chunks
+            # ignore small/noisy chunks
             if len(text.strip()) < 50:
                 continue
 
@@ -95,7 +95,6 @@ def retrieve_context(query, k=3):
                 continue
 
             score = 0
-
             for word in expanded:
                 if word in text:
                     score += 2
@@ -116,7 +115,7 @@ def retrieve_context(query, k=3):
     if not selected:
         selected = chunks[:k]
 
-    return "\n".join(selected)
+    return "\n".join(selected[:2])  # 🔥 limit context
 
 # 🔹 GROQ CALL
 def call_groq(prompt):
@@ -157,12 +156,13 @@ def ask(q: str):
     prompt = f"""
 You are an AI assistant.
 
-Answer ONLY using relevant parts of the context.
+STRICT RULES:
+- Answer ONLY from the context
+- Do NOT guess or assume
+- Do NOT add extra information
+- If answer is not clearly present, say: "Not found in document"
 
-- Be precise
-- Be short
-- Do not include unrelated info
-- If not found, say: "Not found in document"
+Keep answer short and factual.
 
 Context:
 {context}
@@ -170,6 +170,10 @@ Context:
 Question:
 {q}
 """
+
+    # 🔥 prevent fake numbers
+    if any(word in q.lower() for word in ["how many", "number", "days"]):
+        prompt += "\nOnly include numbers if explicitly mentioned in context."
 
     answer = call_groq(prompt)
 
