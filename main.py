@@ -5,7 +5,7 @@ import requests
 from dotenv import load_dotenv
 import pickle
 
-# 🔥 Load environment variables
+# 🔥 Load env
 load_dotenv()
 
 app = FastAPI(title="Production RAG Backend")
@@ -22,55 +22,48 @@ app.add_middleware(
 # 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 BASE PATH
+# 🔹 PATH
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHUNKS_PATH = os.path.join(BASE_DIR, "data", "chunks.pkl")
 
-print("📂 Expected chunks path:", CHUNKS_PATH)
+print("📂 Loading from:", CHUNKS_PATH)
 
-# 🔹 LOAD DATA SAFELY
+# 🔹 LOAD CHUNKS
 chunks = []
 
 def load_chunks():
     global chunks
     try:
         if not os.path.exists(CHUNKS_PATH):
-            print("❌ chunks.pkl not found")
-            chunks = []
+            print("❌ chunks not found")
             return
 
         with open(CHUNKS_PATH, "rb") as f:
             chunks = pickle.load(f)
 
-        if not isinstance(chunks, list):
-            print("⚠️ Invalid chunks format")
-            chunks = []
-
         print(f"✅ Loaded {len(chunks)} chunks")
 
     except Exception as e:
-        print("❌ Error loading chunks:", str(e))
-        chunks = []
+        print("❌ Load error:", str(e))
 
-# Load at startup
 load_chunks()
 
 # 🔹 ROOT
 @app.get("/")
 def home():
-    return {"status": "running", "message": "Production RAG Live"}
+    return {"status": "running"}
 
 # 🔹 DEBUG
 @app.get("/debug")
 def debug():
     return {
-        "api_key_loaded": bool(GROQ_API_KEY),
         "chunks_loaded": len(chunks),
-        "chunks_path": CHUNKS_PATH
+        "path": CHUNKS_PATH,
+        "api_key": bool(GROQ_API_KEY)
     }
 
-# 🔹 SAFE RETRIEVAL
-def retrieve_context(query, k=5):
+# 🔥 IMPROVED RETRIEVAL (LESS NOISE)
+def retrieve_context(query, k=3):
     if not chunks:
         return ""
 
@@ -82,38 +75,36 @@ def retrieve_context(query, k=5):
         "benefits": ["benefits", "insurance", "health", "coverage"]
     }
 
-    expanded_words = query.split()
+    expanded = query.split()
 
     for word in query.split():
         if word in synonyms:
-            expanded_words.extend(synonyms[word])
+            expanded.extend(synonyms[word])
 
     scored = []
 
     for chunk in chunks:
         try:
             text = chunk.lower()
-            score = sum(1 for word in expanded_words if word in text)
+            score = sum(1 for word in expanded if word in text)
 
-            if score > 0:
+            # 🔥 stricter filtering
+            if score >= 2:
                 scored.append((score, chunk))
         except:
             continue
 
     scored.sort(reverse=True, key=lambda x: x[0])
 
-    top = [chunk for _, chunk in scored[:k]]
+    selected = [chunk for _, chunk in scored[:k]]
 
-    if not top:
-        top = chunks[:k]
+    if not selected:
+        selected = chunks[:k]
 
-    return "\n".join(top)
+    return "\n".join(selected)
 
-# 🔹 GROQ CALL (SAFE)
+# 🔹 GROQ CALL
 def call_groq(prompt):
-    if not GROQ_API_KEY:
-        return "Error: Missing API key"
-
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     headers = {
@@ -124,7 +115,7 @@ def call_groq(prompt):
     data = {
         "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3
+        "temperature": 0.2
     }
 
     try:
@@ -134,27 +125,29 @@ def call_groq(prompt):
             return f"API Error: {r.text}"
 
         res = r.json()
-
         return res["choices"][0]["message"]["content"]
 
     except Exception as e:
-        return f"Request failed: {str(e)}"
+        return f"Error: {str(e)}"
 
 # 🔥 MAIN ENDPOINT
 @app.get("/ask")
 def ask(q: str):
 
     if not q.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
+        raise HTTPException(status_code=400, detail="Empty query")
 
     context = retrieve_context(q)
 
     prompt = f"""
 You are an AI assistant.
 
-Answer using the context below.
-If partial info exists, answer what you can.
-Say "Not found in document" ONLY if nothing relevant exists.
+Answer clearly and concisely using ONLY the context.
+
+- Do NOT add extra explanation
+- Do NOT repeat points
+- Keep answer short and precise
+- If not found, say: "Not found in document"
 
 Context:
 {context}
@@ -168,6 +161,5 @@ Question:
     return {
         "query": q,
         "answer": answer,
-        "context_preview": context[:300],
-        "chunks_used": len(context.split("\n"))
+        "context_used": context[:200]
     }
