@@ -5,7 +5,7 @@ import requests
 from dotenv import load_dotenv
 import pickle
 
-# 🔥 Load env
+# 🔥 Load environment
 load_dotenv()
 
 app = FastAPI(title="Stable RAG Backend")
@@ -22,18 +22,21 @@ app.add_middleware(
 # 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 LOAD CHUNKS
-print("🔄 Loading chunks...")
+# 🔥 CORRECT PATH HANDLING (THIS FIXES YOUR ISSUE)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CHUNKS_PATH = os.path.join(BASE_DIR, "chunks.pkl")
+
+print("📂 Looking for chunks at:", CHUNKS_PATH)
 
 chunks = []
 
 try:
-    if os.path.exists("chunks.pkl"):
-        with open("chunks.pkl", "rb") as f:
+    if os.path.exists(CHUNKS_PATH):
+        with open(CHUNKS_PATH, "rb") as f:
             chunks = pickle.load(f)
         print(f"✅ Loaded {len(chunks)} chunks")
     else:
-        print("❌ chunks.pkl not found")
+        print("❌ chunks.pkl NOT FOUND at:", CHUNKS_PATH)
 except Exception as e:
     print("❌ Error loading chunks:", str(e))
 
@@ -49,34 +52,43 @@ def home():
 def debug():
     return {
         "api_key_loaded": bool(GROQ_API_KEY),
-        "chunks_loaded": len(chunks)
+        "chunks_loaded": len(chunks),
+        "chunks_path": CHUNKS_PATH
     }
 
 
-# 🔥 IMPROVED RETRIEVAL (SCORING BASED)
+# 🔥 SMART RETRIEVAL (SCORING + SYNONYMS)
 def retrieve_context(query, k=5):
     if not chunks:
         return ""
 
-    query_words = query.lower().split()
+    query = query.lower()
+
+    synonyms = {
+        "leave": ["leave", "time off", "vacation", "sick leave", "fmla"],
+        "salary": ["salary", "pay", "wage", "compensation"],
+        "benefits": ["benefits", "insurance", "health", "coverage"]
+    }
+
+    expanded_words = query.split()
+
+    for word in query.split():
+        if word in synonyms:
+            expanded_words.extend(synonyms[word])
+
     scored_chunks = []
 
     for chunk in chunks:
         chunk_lower = chunk.lower()
-
-        # score = number of matching words
-        score = sum(1 for word in query_words if word in chunk_lower)
+        score = sum(1 for word in expanded_words if word in chunk_lower)
 
         if score > 0:
             scored_chunks.append((score, chunk))
 
-    # sort best first
     scored_chunks.sort(reverse=True, key=lambda x: x[0])
 
-    # take top k
     top_chunks = [chunk for _, chunk in scored_chunks[:k]]
 
-    # fallback if nothing matches
     if not top_chunks:
         top_chunks = chunks[:k]
 
@@ -111,7 +123,7 @@ def call_groq(prompt):
         return f"Error: {str(e)}"
 
 
-# 🔥 MAIN ENDPOINT
+# 🔥 MAIN API
 @app.get("/ask")
 def ask(q: str):
 
@@ -126,11 +138,10 @@ def ask(q: str):
     prompt = f"""
 You are an AI assistant.
 
-Answer the question using ONLY the context below.
+Use the context below to answer the question.
 
-If the answer is not found, say: "Not found in document."
-
-Be clear and direct.
+If partial information exists, answer as much as possible.
+Only say "Not found in document" if nothing relevant exists.
 
 Context:
 {context}
