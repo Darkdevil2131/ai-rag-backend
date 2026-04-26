@@ -8,7 +8,7 @@ import pickle
 # 🔥 Load environment variables
 load_dotenv()
 
-app = FastAPI(title="Reliable RAG Backend")
+app = FastAPI(title="Final RAG Backend")
 
 # 🔹 CORS
 app.add_middleware(
@@ -22,7 +22,7 @@ app.add_middleware(
 # 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 PATH SETUP
+# 🔹 PATH
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHUNKS_PATH = os.path.join(BASE_DIR, "data", "chunks.pkl")
 
@@ -62,63 +62,66 @@ def debug():
         "api_key": bool(GROQ_API_KEY)
     }
 
-# 🔥 CLEAN RETRIEVAL (FILTERED)
-def retrieve_context(query, k=3):
+# 🔥 FINAL RETRIEVAL (TOPIC + BEST MATCH)
+def retrieve_context(query):
     if not chunks:
         return ""
 
     query = query.lower()
 
-    synonyms = {
-        "leave": ["leave", "time off", "vacation", "sick leave", "fmla", "absence"],
-        "salary": ["salary", "pay", "wage", "compensation"],
-        "benefits": ["benefits", "insurance", "health", "coverage"]
+    # 🔥 topic understanding
+    topic_map = {
+        "leave": ["leave", "vacation", "sick", "fmla", "absence"],
+        "benefits": ["benefits", "insurance", "401", "compensation", "coverage"],
+        "salary": ["salary", "pay", "wage", "compensation"]
     }
 
-    expanded = query.split()
+    topic_words = []
+    for key in topic_map:
+        if key in query:
+            topic_words = topic_map[key]
+            break
 
-    for word in query.split():
-        if word in synonyms:
-            expanded.extend(synonyms[word])
-
-    scored = []
+    best_score = 0
+    best_chunk = ""
 
     for chunk in chunks:
         try:
             text = chunk.lower()
 
-            # ignore small/noisy chunks
             if len(text.strip()) < 50:
                 continue
 
-            if "electronic communication" in text or "social media" in text:
-                continue
+            # 🔥 topic filter
+            if topic_words:
+                if not any(word in text for word in topic_words):
+                    continue
 
+            # scoring
             score = 0
-            for word in expanded:
+
+            for word in query.split():
                 if word in text:
                     score += 2
 
             if query in text:
                 score += 5
 
-            if score >= 3:
-                scored.append((score, chunk))
+            if score > best_score:
+                best_score = score
+                best_chunk = chunk
 
         except:
             continue
 
-    scored.sort(reverse=True, key=lambda x: x[0])
+    return best_chunk
 
-    selected = [chunk for _, chunk in scored[:k]]
-
-    if not selected:
-        selected = chunks[:k]
-
-    return "\n".join(selected[:2])  # 🔥 limit context
 
 # 🔹 GROQ CALL
 def call_groq(prompt):
+    if not GROQ_API_KEY:
+        return "Error: Missing API key"
+
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     headers = {
@@ -144,6 +147,7 @@ def call_groq(prompt):
     except Exception as e:
         return f"Error: {str(e)}"
 
+
 # 🔥 MAIN ENDPOINT
 @app.get("/ask")
 def ask(q: str):
@@ -157,12 +161,10 @@ def ask(q: str):
 You are an AI assistant.
 
 STRICT RULES:
-- Answer ONLY from the context
-- Do NOT guess or assume
-- Do NOT add extra information
+- Answer ONLY if context is directly relevant
+- Do NOT guess
+- Do NOT combine multiple ideas
 - If answer is not clearly present, say: "Not found in document"
-
-Keep answer short and factual.
 
 Context:
 {context}
@@ -170,10 +172,6 @@ Context:
 Question:
 {q}
 """
-
-    # 🔥 prevent fake numbers
-    if any(word in q.lower() for word in ["how many", "number", "days"]):
-        prompt += "\nOnly include numbers if explicitly mentioned in context."
 
     answer = call_groq(prompt)
 
