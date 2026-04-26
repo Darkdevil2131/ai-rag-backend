@@ -5,10 +5,10 @@ import requests
 from dotenv import load_dotenv
 import pickle
 
-# 🔥 Load environment variables
+# 🔥 Load ENV
 load_dotenv()
 
-app = FastAPI(title="Final RAG Backend")
+app = FastAPI(title="RAG Backend Final")
 
 # 🔹 CORS
 app.add_middleware(
@@ -22,20 +22,20 @@ app.add_middleware(
 # 🔹 API KEY
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# 🔹 PATH
+# 🔹 PATH SETUP (VERY IMPORTANT)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHUNKS_PATH = os.path.join(BASE_DIR, "data", "chunks.pkl")
 
-print("📂 Loading chunks from:", CHUNKS_PATH)
+print("📂 Loading from:", CHUNKS_PATH)
 
-# 🔹 LOAD CHUNKS
+# 🔹 LOAD DATA
 chunks = []
 
 def load_chunks():
     global chunks
     try:
         if not os.path.exists(CHUNKS_PATH):
-            print("❌ chunks.pkl not found")
+            print("❌ chunks.pkl NOT FOUND")
             return
 
         with open(CHUNKS_PATH, "rb") as f:
@@ -44,36 +44,35 @@ def load_chunks():
         print(f"✅ Loaded {len(chunks)} chunks")
 
     except Exception as e:
-        print("❌ Error loading chunks:", str(e))
+        print("❌ Load error:", str(e))
 
 load_chunks()
 
 # 🔹 ROOT
 @app.get("/")
 def home():
-    return {"status": "running"}
+    return {"status": "running", "message": "Backend Live"}
 
 # 🔹 DEBUG
 @app.get("/debug")
 def debug():
     return {
+        "api_key_loaded": bool(GROQ_API_KEY),
         "chunks_loaded": len(chunks),
-        "chunks_path": CHUNKS_PATH,
-        "api_key": bool(GROQ_API_KEY)
+        "chunks_path": CHUNKS_PATH
     }
 
-# 🔥 FINAL RETRIEVAL (TOPIC + BEST MATCH)
-def retrieve_context(query):
+# 🔥 SMART RETRIEVAL (BALANCED)
+def retrieve_context(query, k=2):
     if not chunks:
         return ""
 
     query = query.lower()
 
-    # 🔥 topic understanding
     topic_map = {
         "leave": ["leave", "vacation", "sick", "fmla", "absence"],
-        "benefits": ["benefits", "insurance", "401", "compensation", "coverage"],
-        "salary": ["salary", "pay", "wage", "compensation"]
+        "benefits": ["benefits", "insurance", "401", "compensation"],
+        "salary": ["salary", "pay", "wage"]
     }
 
     topic_words = []
@@ -82,8 +81,7 @@ def retrieve_context(query):
             topic_words = topic_map[key]
             break
 
-    best_score = 0
-    best_chunk = ""
+    scored = []
 
     for chunk in chunks:
         try:
@@ -92,35 +90,41 @@ def retrieve_context(query):
             if len(text.strip()) < 50:
                 continue
 
-            # 🔥 topic filter
-            if topic_words:
-                if not any(word in text for word in topic_words):
-                    continue
-
-            # scoring
             score = 0
 
+            # topic boost
+            if topic_words:
+                if any(word in text for word in topic_words):
+                    score += 3
+                else:
+                    continue
+
+            # keyword match
             for word in query.split():
                 if word in text:
                     score += 2
 
+            # exact match boost
             if query in text:
                 score += 5
 
-            if score > best_score:
-                best_score = score
-                best_chunk = chunk
+            if score > 0:
+                scored.append((score, chunk))
 
         except:
             continue
 
-    return best_chunk
+    scored.sort(reverse=True, key=lambda x: x[0])
+
+    selected = [chunk for _, chunk in scored[:k]]
+
+    return "\n".join(selected)
 
 
 # 🔹 GROQ CALL
 def call_groq(prompt):
     if not GROQ_API_KEY:
-        return "Error: Missing API key"
+        return "Missing API key"
 
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -148,23 +152,23 @@ def call_groq(prompt):
         return f"Error: {str(e)}"
 
 
-# 🔥 MAIN ENDPOINT
+# 🔥 MAIN API
 @app.get("/ask")
 def ask(q: str):
 
     if not q.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
+        raise HTTPException(status_code=400, detail="Empty query")
 
     context = retrieve_context(q)
 
     prompt = f"""
 You are an AI assistant.
 
-STRICT RULES:
-- Answer ONLY if context is directly relevant
+RULES:
+- Answer ONLY using context
 - Do NOT guess
-- Do NOT combine multiple ideas
-- If answer is not clearly present, say: "Not found in document"
+- If partial info exists, answer that
+- If nothing found, say: "Not found in document"
 
 Context:
 {context}
